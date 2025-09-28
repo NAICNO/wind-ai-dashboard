@@ -12,7 +12,7 @@ from matplotlib.gridspec import GridSpec
 
 def load_and_validate_data(yesterday_file, competition_file):
     """
-    Load and validate data from both CSV files
+    Load and validate data from both CSV files with proper type conversion
     """
     try:
         # Load data
@@ -38,6 +38,20 @@ def load_and_validate_data(yesterday_file, competition_file):
                 duplicate_teams = team_counts[team_counts > 1].index.tolist()
                 print(f"Error: {name} file has multiple entries for teams: {duplicate_teams}")
                 return None, None
+        
+        # Convert RMSE columns to numeric, handling errors
+        for df, name in [(df_yesterday, "Yesterday"), (df_competition, "Competition")]:
+            original_dtype = df['rmse'].dtype
+            df['rmse'] = pd.to_numeric(df['rmse'], errors='coerce')
+            
+            # Check for conversion issues
+            if df['rmse'].isna().any():
+                problematic_rows = df[df['rmse'].isna()]
+                print(f"Warning: {name} file has non-numeric RMSE values for teams: {problematic_rows['team'].tolist()}")
+                print(f"These rows will be dropped.")
+                df = df.dropna(subset=['rmse'])
+            
+            print(f"  {name} RMSE dtype: {original_dtype} -> {df['rmse'].dtype}")
         
         # Check if teams match between files
         yesterday_teams = set(df_yesterday['team'].unique())
@@ -68,12 +82,17 @@ def create_summary_table(ax, df, title, team_order=None):
     # Create a copy to avoid modifying original
     df_table = df.copy()
     
+    # Ensure RMSE is numeric
+    df_table['rmse'] = pd.to_numeric(df_table['rmse'], errors='coerce')
+    
     # Add rank column (lower RMSE = better rank = lower number)
     df_table['rank'] = df_table['rmse'].rank(method='min').astype(int)
     
     if team_order is not None:
         # Reorder dataframe according to provided team order
-        df_table = df_table.set_index('team').loc[team_order].reset_index()
+        # Handle case where team_order might have teams not in df_table
+        available_teams = [team for team in team_order if team in df_table['team'].values]
+        df_table = df_table.set_index('team').loc[available_teams].reset_index()
     else:
         # Sort by rank (ascending) if no specific order provided
         df_table = df_table.sort_values('rank')
@@ -124,9 +143,21 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     """
     Generate comparison plot with summary tables at the top including ranks
     """
+    # Ensure RMSE columns are numeric
+    df_yesterday['rmse'] = pd.to_numeric(df_yesterday['rmse'], errors='coerce')
+    df_competition['rmse'] = pd.to_numeric(df_competition['rmse'], errors='coerce')
+    
+    # Drop any rows with NaN RMSE values
+    df_yesterday = df_yesterday.dropna(subset=['rmse'])
+    df_competition = df_competition.dropna(subset=['rmse'])
+    
     # Merge data for comparison
     df_merged = pd.merge(df_yesterday, df_competition, on='team', 
                          suffixes=('_yesterday', '_competition'))
+    
+    if len(df_merged) == 0:
+        print("Error: No common teams with valid RMSE values found between the files.")
+        return None
     
     # Calculate differences
     df_merged['rmse_diff'] = df_merged['rmse_competition'] - df_merged['rmse_yesterday']
@@ -137,26 +168,28 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     team_order = df_merged['team'].tolist()
     
     # Create figure with GridSpec for better layout control
-    fig = plt.figure(figsize=(18, 14))
-    gs = GridSpec(3, 2, figure=fig, height_ratios=[1, 1, 1.5])
+    fig = plt.figure(figsize=(16, 10))
+    gs = GridSpec(2, 2, figure=fig, height_ratios=[1, 1])
     
-    # Create subplots
+    # Create subplots - only tables and two main plots
     ax_table1 = fig.add_subplot(gs[0, 0])  # Yesterday table
     ax_table2 = fig.add_subplot(gs[0, 1])  # Competition table
     ax1 = fig.add_subplot(gs[1, 0])        # Bar chart
     ax2 = fig.add_subplot(gs[1, 1])        # Scatter plot
-    ax3 = fig.add_subplot(gs[2, 0])        # Improvement chart
-    ax4 = fig.add_subplot(gs[2, 1])        # Ranking chart
     
     # Set main title
     fig.suptitle('RMSE Analysis: Yesterday vs Competition Period (with Rankings)', 
                  fontsize=16, fontweight='bold', y=0.98)
     
     # Create summary tables with ranks
-    df_yesterday_table = create_summary_table(ax_table1, df_yesterday, 
-                                             'Yesterday Performance (Ranked by RMSE)')
-    df_competition_table = create_summary_table(ax_table2, df_competition, 
-                                               'Competition Performance (Ranked by RMSE)')
+    try:
+        df_yesterday_table = create_summary_table(ax_table1, df_yesterday, 
+                                                 'Yesterday Performance (Ranked by RMSE)', team_order)
+        df_competition_table = create_summary_table(ax_table2, df_competition, 
+                                                   'Competition Performance (Ranked by RMSE)', team_order)
+    except Exception as e:
+        print(f"Error creating summary tables: {e}")
+        return None
     
     # Add rank columns to merged dataframe for plots
     df_merged['rank_yesterday'] = df_merged['rmse_yesterday'].rank(method='min').astype(int)
@@ -174,7 +207,7 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     
     ax1.set_xlabel('Team')
     ax1.set_ylabel('RMSE')
-    ax1.set_title('RMSE Comparison: Yesterday vs Competition (with Ranks)', fontweight='bold')
+    ax1.set_title('RMSE Comparison: Yesterday vs Competition', fontweight='bold')
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(df_merged['team'], rotation=45, ha='right')
     ax1.legend()
@@ -191,94 +224,37 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
         rank_comp = df_merged.iloc[i]['rank_competition']
         
         ax1.text(bar1.get_x() + bar1.get_width()/2., height1 + 0.001,
-                f'{height1:.4f}\n(R#{rank_yest})', ha='center', va='bottom', fontsize=6)
+                f'{height1:.4f}\n(R#{rank_yest})', ha='center', va='bottom', fontsize=7)
         ax1.text(bar2.get_x() + bar2.get_width()/2., height2 + 0.001,
-                f'{height2:.4f}\n(R#{rank_comp})', ha='center', va='bottom', fontsize=6)
+                f'{height2:.4f}\n(R#{rank_comp})', ha='center', va='bottom', fontsize=7)
     
     # Plot 2: Scatter plot showing relationship with ranks
     scatter = ax2.scatter(df_merged['rmse_yesterday'], df_merged['rmse_competition'], 
-                         s=60, alpha=0.7, color='green', edgecolors='black', linewidth=0.5)
+                         s=80, alpha=0.7, color='green', edgecolors='black', linewidth=0.5)
     
     # Add team labels with ranks to points
-    for i, row in df_merged.iterrows():
-        ax2.annotate(f"{row['team']}\n(Y#{row['rank_yesterday']}/C#{row['rank_competition']})", 
-                    (row['rmse_yesterday'], row['rmse_competition']),
-                    xytext=(5, 5), textcoords='offset points', fontsize=7,
-                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
-    
-    # Add reference line (y = x)
-    min_val = min(df_merged[['rmse_yesterday', 'rmse_competition']].min())
-    max_val = max(df_merged[['rmse_yesterday', 'rmse_competition']].max())
-    ax2.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.5, label='y = x')
-    
-    ax2.set_xlabel('Yesterday RMSE')
-    ax2.set_ylabel('Competition RMSE')
-    ax2.set_title('RMSE Correlation with Rank Annotations\n(Y#=Yesterday Rank, C#=Competition Rank)', 
-                  fontweight='bold', fontsize=10)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # Plot 3: Improvement/change plot with rank change
-    colors = ['green' if imp else 'red' for imp in df_merged['improvement']]
-    bars = ax3.bar(range(len(df_merged)), df_merged['rmse_diff'], color=colors, alpha=0.7, edgecolor='black')
-    
-    ax3.set_xlabel('Team')
-    ax3.set_ylabel('RMSE Difference (Competition - Yesterday)')
-    ax3.set_title('RMSE Change: Negative = Improvement\n(with Rank Change)', fontweight='bold')
-    ax3.set_xticks(range(len(df_merged)))
-    ax3.set_xticklabels(df_merged['team'], rotation=45, ha='right')
-    ax3.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
-    ax3.grid(True, alpha=0.3)
-    
-    # Add value labels and rank change on bars
-    for i, (bar, value) in enumerate(zip(bars, df_merged['rmse_diff'])):
-        height = bar.get_height()
-        rank_change = df_merged.iloc[i]['rank_change']
-        
-        va = 'bottom' if height >= 0 else 'top'
-        color = 'black' if abs(height) > 0.01 else 'white'
-        y_offset = 0.001 if height >= 0 else -0.001
-        
-        # Rank change symbol
-        rank_symbol = "↑" if rank_change > 0 else "↓" if rank_change < 0 else "→"
-        rank_color = "green" if rank_change > 0 else "red" if rank_change < 0 else "gray"
-        
-        ax3.text(bar.get_x() + bar.get_width()/2., height + y_offset, 
-                f'{value:+.4f}\n{rank_symbol}{abs(rank_change)}', 
-                ha='center', va=va, fontsize=7, color=color, fontweight='bold')
-    
-    # Plot 4: Ranking comparison with detailed annotations
-    ax4.scatter(df_merged['rank_yesterday'], df_merged['rank_competition'], 
-               s=80, alpha=0.7, color='purple', edgecolors='black', linewidth=0.5)
-    
-    # Add team labels with detailed rank info
     for i, row in df_merged.iterrows():
         rank_change = row['rank_change']
         change_symbol = "↑" if rank_change > 0 else "↓" if rank_change < 0 else "→"
         change_color = "green" if rank_change > 0 else "red" if rank_change < 0 else "gray"
         
-        ax4.annotate(f"{row['team']}\n{change_symbol}{abs(rank_change)}", 
-                    (row['rank_yesterday'], row['rank_competition']),
-                    xytext=(8, 8), textcoords='offset points', fontsize=8,
+        ax2.annotate(f"{row['team']}\nY#{row['rank_yesterday']} → C#{row['rank_competition']}\n{change_symbol}{abs(rank_change)}", 
+                    (row['rmse_yesterday'], row['rmse_competition']),
+                    xytext=(8, 8), textcoords='offset points', fontsize=7,
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
                     color=change_color, fontweight='bold')
     
-    ax4.set_xlabel('Yesterday Rank (1 = Best)')
-    ax4.set_ylabel('Competition Rank (1 = Best)')
-    ax4.set_title('Rank Comparison: ↑ = Improved Rank, ↓ = Declined Rank', fontweight='bold')
-    ax4.grid(True, alpha=0.3)
+    # Add reference line (y = x)
+    min_val = min(df_merged[['rmse_yesterday', 'rmse_competition']].min())
+    max_val = max(df_merged[['rmse_yesterday', 'rmse_competition']].max())
+    ax2.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.5, label='y = x (no change)')
     
-    # Add reference line and improvement regions
-    max_rank = max(df_merged[['rank_yesterday', 'rank_competition']].max())
-    ax4.plot([1, max_rank], [1, max_rank], 'r--', alpha=0.5, label='No change')
-    
-    # Add improvement region shading
-    ax4.fill_between([1, max_rank], [1, 1], [max_rank, max_rank], 
-                    alpha=0.1, color='green', label='Improvement area')
-    
-    ax4.legend()
-    ax4.invert_xaxis()  # Reverse axes so rank 1 is top-left
-    ax4.invert_yaxis()
+    ax2.set_xlabel('Yesterday RMSE')
+    ax2.set_ylabel('Competition RMSE')
+    ax2.set_title('RMSE Correlation with Rank Changes\n(↑ = rank improvement, ↓ = rank decline)', 
+                  fontweight='bold', fontsize=10)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
     
     # Adjust layout
     plt.tight_layout()
@@ -294,6 +270,10 @@ def print_statistics(df_merged):
     """
     Print comprehensive statistics about the comparison
     """
+    if df_merged is None:
+        print("No data available for statistics.")
+        return
+        
     print(f"\n{'='*60}")
     print("COMPREHENSIVE STATISTICS")
     print(f"{'='*60}")
@@ -338,7 +318,7 @@ def print_statistics(df_merged):
 
 def create_sample_files():
     """
-    Create sample CSV files for testing
+    Create sample CSV files for testing with numeric RMSE values
     """
     teams = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 
              'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet']
