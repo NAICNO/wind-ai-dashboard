@@ -1,6 +1,8 @@
 #!/bin/env python3
 #sabryr Norwegian Ai cloud
 #skelliton code generated with deepseek
+#29-09-2025
+#V2.0
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -134,7 +136,8 @@ def create_summary_table(ax, df, title, team_order=None):
                 elif i == 3:  # Rank 3 - Bronze
                     table[(i, j)].set_facecolor('#CD7F32')
     
-    ax.set_title(title, fontweight='bold', fontsize=10, pad=10)
+    # Set title with reduced padding to bring it closer to the table
+    ax.set_title(title, fontweight='bold', fontsize=10, pad=8)
     ax.axis('off')
     
     return df_table
@@ -168,8 +171,17 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     team_order = df_merged['team'].tolist()
     
     # Create figure with GridSpec for better layout control
-    fig = plt.figure(figsize=(16, 10))
-    gs = GridSpec(2, 2, figure=fig, height_ratios=[1, 1])
+    fig = plt.figure(figsize=(16, 12))
+    
+    # Use GridSpec with adjusted parameters to avoid tight_layout
+    gs = GridSpec(2, 2, figure=fig, 
+                  height_ratios=[1.1, 1], 
+                  hspace=0.3, 
+                  wspace=0.3,
+                  top=0.94,    # Manual top adjustment
+                  bottom=0.08, # Manual bottom adjustment
+                  left=0.08,   # Manual left adjustment
+                  right=0.95)  # Manual right adjustment
     
     # Create subplots - only tables and two main plots
     ax_table1 = fig.add_subplot(gs[0, 0])  # Yesterday table
@@ -177,7 +189,7 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     ax1 = fig.add_subplot(gs[1, 0])        # Bar chart
     ax2 = fig.add_subplot(gs[1, 1])        # Scatter plot
     
-    # Set main title
+    # Set main title with manual positioning
     fig.suptitle('RMSE Analysis: Yesterday vs Competition Period (with Rankings)', 
                  fontsize=16, fontweight='bold', y=0.98)
     
@@ -207,7 +219,7 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     
     ax1.set_xlabel('Team')
     ax1.set_ylabel('RMSE')
-    ax1.set_title('RMSE Comparison: Yesterday vs Competition', fontweight='bold')
+    ax1.set_title('RMSE Comparison: Yesterday vs Competition', fontweight='bold', pad=15)
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(df_merged['team'], rotation=45, ha='right')
     ax1.legend()
@@ -252,15 +264,14 @@ def generate_comparison_plot(df_yesterday, df_competition, output_file='rmse_com
     ax2.set_xlabel('Yesterday RMSE')
     ax2.set_ylabel('Competition RMSE')
     ax2.set_title('RMSE Correlation with Rank Changes\n(↑ = rank improvement, ↓ = rank decline)', 
-                  fontweight='bold', fontsize=10)
+                  fontweight='bold', fontsize=10, pad=15)
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
-    # Adjust layout
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.94)
+    # Remove tight_layout and use manual adjustments in GridSpec instead
+    # No plt.tight_layout() or plt.subplots_adjust() calls
     
-    # Save the plot
+    # Save the plot with bbox_inches='tight' to handle any remaining layout issues
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"\nComparison plot with rankings saved as: {output_file}")
     
